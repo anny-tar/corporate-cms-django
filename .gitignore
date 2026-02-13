@@ -1,0 +1,46 @@
+# Виртуальное окружение
+venv/
+env/
+ENV/
+
+# Файлы базы данных
+*.sqlite3
+*.db
+
+# Файлы, загруженные пользователями (медиа)
+/media/
+uploads/
+
+# Статические файлы (собранные)
+/staticfiles/
+/static_collected/
+
+# Локальные настройки
+config/settings_local.py
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Редакторы и IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
