@@ -1,8 +1,34 @@
-#core/models.py
-from django.db import models
 import os
 from django.db import models
+from django.core.exceptions import ValidationError
+from django.utils import timezone
 from PIL import Image as PilImage
+
+
+def validate_image_file(value):
+    """Валидатор для изображений"""
+    ext = os.path.splitext(value.name)[1].lower()
+    valid_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg']
+    if ext not in valid_extensions:
+        raise ValidationError(f'Неподдерживаемый формат изображения. Разрешены: {", ".join(valid_extensions)}')
+    
+    # Проверка MIME-типа (базовая)
+    valid_mimes = ['image/jpeg', 'image/png', 'image/gif', 'image/bmp', 'image/webp', 'image/svg+xml']
+    if hasattr(value.file, 'content_type'):
+        if value.file.content_type not in valid_mimes:
+            raise ValidationError(f'Неподдерживаемый MIME-тип изображения')
+
+
+def validate_document_file(value):
+    """Валидатор для документов"""
+    ext = os.path.splitext(value.name)[1].lower()
+    valid_extensions = [
+        '.pdf', '.doc', '.docx', '.xls', '.xlsx', 
+        '.ppt', '.pptx', '.txt', '.rtf', '.odt'
+    ]
+    if ext not in valid_extensions:
+        raise ValidationError(f'Неподдерживаемый формат файла. Разрешены: {", ".join(valid_extensions)}')
+
 
 class StatusModel(models.Model):
     """
@@ -25,6 +51,7 @@ class StatusModel(models.Model):
     class Meta:
         abstract = True
 
+
 class SortableModel(models.Model):
     """
     Абстрактная базовая модель для всех сущностей,
@@ -40,12 +67,14 @@ class SortableModel(models.Model):
         abstract = True
         ordering = ['order']
 
+
 class Image(StatusModel):
     """
     Централизованное хранение всех изображений сайта.
     """
     image = models.ImageField(
         upload_to='images/%Y/%m/%d/',
+        validators=[validate_image_file],
         verbose_name='Изображение'
     )
     alt_text = models.CharField(
@@ -61,40 +90,72 @@ class Image(StatusModel):
     width = models.PositiveIntegerField(
         editable=False,
         null=True,
-        verbose_name='Ширина'
+        blank=True,
+        verbose_name='Ширина (пиксели)'
     )
     height = models.PositiveIntegerField(
         editable=False,
         null=True,
-        verbose_name='Высота'
+        blank=True,
+        verbose_name='Высота (пиксели)'
     )
     file_size = models.PositiveIntegerField(
         editable=False,
         null=True,
-        verbose_name='Размер файла (байт)'
+        blank=True,
+        verbose_name='Размер файла (байты)'
+    )
+    file_type = models.CharField(
+        max_length=50,
+        editable=False,
+        blank=True,
+        verbose_name='Тип файла'
     )
 
     class Meta:
         verbose_name = 'Изображение'
         verbose_name_plural = 'Изображения'
+        ordering = ['-created_at']
 
     def __str__(self):
-        return self.title or self.alt_text or f'Изображение {self.id}'
+        if self.title:
+            return self.title
+        if self.alt_text:
+            return self.alt_text
+        return f'Изображение #{self.id}'
 
     def save(self, *args, **kwargs):
-        """При сохранении автоматически определяем размеры и вес"""
-        if self.image and not self.file_size:
+        """При сохранении обновляем метаданные файла"""
+        # Обновляем размер файла
+        if self.image:
             self.file_size = self.image.size
             
-        # Если есть файл изображения, но нет размеров
-        if self.image and not (self.width and self.height):
-            try:
-                img = PilImage.open(self.image.path)
-                self.width, self.height = img.size
-            except:
-                pass
+            # Определяем тип файла по расширению
+            ext = os.path.splitext(self.image.name)[1].lower()
+            type_map = {
+                '.jpg': 'JPEG', '.jpeg': 'JPEG', '.png': 'PNG',
+                '.gif': 'GIF', '.bmp': 'BMP', '.webp': 'WEBP',
+                '.svg': 'SVG'
+            }
+            self.file_type = type_map.get(ext, ext.upper().replace('.', ''))
+            
+            # Обновляем размеры изображения (если это не SVG)
+            if ext != '.svg':
+                try:
+                    # Открываем файл через PIL для получения размеров
+                    img = PilImage.open(self.image)
+                    self.width, self.height = img.size
+                except Exception as e:
+                    # Если не удалось определить размеры, оставляем null
+                    self.width = None
+                    self.height = None
+            else:
+                # Для SVG размеры не определяем
+                self.width = None
+                self.height = None
                 
         super().save(*args, **kwargs)
+
 
 class File(StatusModel):
     """
@@ -102,6 +163,7 @@ class File(StatusModel):
     """
     file = models.FileField(
         upload_to='files/%Y/%m/%d/',
+        validators=[validate_document_file],
         verbose_name='Файл'
     )
     name = models.CharField(
@@ -115,17 +177,40 @@ class File(StatusModel):
     file_size = models.PositiveIntegerField(
         editable=False,
         null=True,
-        verbose_name='Размер файла (байт)'
+        blank=True,
+        verbose_name='Размер файла (байты)'
+    )
+    file_type = models.CharField(
+        max_length=50,
+        editable=False,
+        blank=True,
+        verbose_name='Тип файла'
     )
 
     class Meta:
         verbose_name = 'Файл'
         verbose_name_plural = 'Файлы'
+        ordering = ['-created_at']
 
     def __str__(self):
         return self.name
 
     def save(self, *args, **kwargs):
-        if self.file and not self.file_size:
+        """При сохранении обновляем метаданные файла"""
+        if self.file:
             self.file_size = self.file.size
+            
+            # Определяем тип файла по расширению
+            ext = os.path.splitext(self.file.name)[1].lower()
+            type_map = {
+                '.pdf': 'PDF',
+                '.doc': 'DOC', '.docx': 'DOCX',
+                '.xls': 'XLS', '.xlsx': 'XLSX',
+                '.ppt': 'PPT', '.pptx': 'PPTX',
+                '.txt': 'TXT',
+                '.rtf': 'RTF',
+                '.odt': 'ODT'
+            }
+            self.file_type = type_map.get(ext, ext.upper().replace('.', ''))
+            
         super().save(*args, **kwargs)
